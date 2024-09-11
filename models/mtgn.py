@@ -150,9 +150,9 @@ class MTGNMemory(torch.nn.Module):
                                                      self.msg_d_module)
 
         # Aggregate messages.
-        # msg = torch.cat([msg_src, msg_dst], dim=0)
-
+        #
         idx = torch.cat([src_s, src_d], dim=0)
+        # msg = torch.cat([msg_s, msg_d], dim=0)
         t = torch.cat([t_s, t_d], dim=0)
 
         assoc_src = self._assoc[src_s]
@@ -211,16 +211,6 @@ class MTGNMemory(torch.nn.Module):
                 torch.arange(self.num_nodes, device=self.memory.device))
             self._reset_message_store()
         super().train(mode)
-
-
-class IdentityMessage(torch.nn.Module):
-    def __init__(self, raw_msg_dim: int, memory_dim: int, time_dim: int):
-        super().__init__()
-        self.out_channels = raw_msg_dim + 2 * memory_dim + time_dim
-
-    def forward(self, z_src: Tensor, z_dst: Tensor, raw_msg: Tensor,
-                t_enc: Tensor):
-        return torch.cat([z_src, z_dst, raw_msg, t_enc], dim=-1)
 
 
 class LastAggregator(torch.nn.Module):

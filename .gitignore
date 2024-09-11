@@ -8,3 +8,4 @@ wandb/
 slurm-log/
 *.job
 **/__pycache__/
+logs/
