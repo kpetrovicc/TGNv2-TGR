@@ -1,0 +1,10 @@
+TGB
+.idea/**
+saved_models/
+saved_results/
+models/__pycache__/
+wandb/
+*.pyc
+slurm-log/
+*.job
+**/__pycache__/
