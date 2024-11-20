@@ -17,6 +17,9 @@ from torch_geometric.nn.models.tgn import (
     IdentityMessage,
 )
 
+from modules.shuffle_memory import ExpanderGCN, ExpanderGAT, ExpanderGIN, MLP, ExpanderGATv2
+from modules.cayley_construction import build_cayley_bank, batched_augment_cayley
+
 from tgb.nodeproppred.dataset_pyg import PyGNodePropPredDataset, TemporalData
 from tgb.nodeproppred.evaluate import Evaluator
 from tgb.utils.utils import set_random_seed
@@ -38,7 +41,10 @@ def process_edges(memory, src, dst, t, msg, neighbor_loader):
 def train(
         epoch,
         memory,
+        memory_dim,
         gnn,
+        exp_gnn,
+        cayley_g,
         node_pred,
         lr_scheduler: LRScheduler,
         dataset: PyGNodePropPredDataset,
@@ -59,6 +65,9 @@ def train(
 
     memory.reset_state()  # Start with a fresh memory.
     neighbor_loader.reset_state()  # Start with an empty graph.
+
+    n_id_obs = torch.empty(0, dtype=torch.long, device=device) # Generate empty tensor to remember all observed nodes so far.
+    z_exp_obs = torch.zeros(1, memory_dim, device=device) # Generate empty tensor to remember all expander embeddings so far.
 
     total_loss = 0
     label_t = dataset.get_label_time()  # check when does the first label start
@@ -112,10 +121,15 @@ def train(
             3. run gnn with the extracted memory embeddings and the corresponding time and message
             """
             n_id = label_srcs
+            new_nodes = n_id[~torch.isin(n_id, n_id_obs)] # Identify new nodes that have not been observed before.
+            n_id_seen = n_id[~torch.isin(n_id, new_nodes)] # Find nodes in n-id which are not new nodes
+            n_id_obs = torch.cat((n_id_obs, new_nodes), dim=0).unique() # Append new nodes to the list of all nodes.
             n_id_neighbors, mem_edge_index, e_id = neighbor_loader(n_id)
             assoc[n_id_neighbors] = torch.arange(n_id_neighbors.size(0), device=device)
 
             z, last_update = memory(n_id_neighbors)
+            z_exp = z_exp_obs[n_id_seen].detach() # Get expander embeddings for nodes that have been observed before.
+            z[assoc[n_id_seen]] = z_exp # Get node states for nodes that have been observed before.
             if use_gnn:
                 z = gnn(
                     z,
@@ -146,6 +160,7 @@ def train(
 
             loss.backward()
             optimizer.step()
+            
             total_loss += float(loss)
 
             metrics = {
@@ -157,6 +172,11 @@ def train(
 
         # Update memory and neighbor loader with ground-truth state.
         process_edges(memory, src, dst, t, msg, neighbor_loader)
+        # Memory mixing to generate expander embeddings
+        x_obs = memory.memory
+
+        # Get expander embeddings for observed nodes.
+        z_exp_obs = exp_gnn(x_obs, cayley_g) # Generate expander embeddings for observed nodes.
         memory.detach()
 
     lr_scheduler.step()
@@ -173,7 +193,10 @@ def train(
 @torch.no_grad()
 def test(
         memory,
+        memory_dim,
         gnn,
+        exp_gnn,
+        cayley_g,
         node_pred,
         dataset: PyGNodePropPredDataset,
         data: TemporalData,
@@ -189,6 +212,10 @@ def test(
     memory.eval()
     gnn.eval()
     node_pred.eval()
+
+    n_id_obs = torch.empty(0, dtype=torch.long, device=device) # Generate empty tensor to remember all observed nodes so far.
+    z_exp_obs = torch.zeros(1, memory_dim, device=device) # Generate empty tensor to remember all expander embeddings so far.
+
     total_score = 0
     label_t = dataset.get_label_time()  # check when does the first label start
     num_label_ts = 0
@@ -235,10 +262,15 @@ def test(
             3. run gnn with the extracted memory embeddings and the corresponding time and message
             """
             n_id = label_srcs
+            new_nodes = n_id[~torch.isin(n_id, n_id_obs)] # Identify new nodes that have not been observed before.
+            n_id_seen = n_id[~torch.isin(n_id, new_nodes)] # Find nodes in n-id which are not new nodes
+            n_id_obs = torch.cat((n_id_obs, new_nodes), dim=0).unique() # Append new nodes to the list of all nodes.
             n_id_neighbors, mem_edge_index, e_id = neighbor_loader(n_id)
             assoc[n_id_neighbors] = torch.arange(n_id_neighbors.size(0), device=device)
 
             z,  last_update = memory(n_id_neighbors)
+            z_exp = z_exp_obs[n_id_seen].detach() # Get expander embeddings for nodes that have been observed before.
+            z[assoc[n_id_seen]] = z_exp # Get node states for nodes that have been observed before.
             if use_gnn:
                 z = gnn(
                     z,
@@ -265,6 +297,11 @@ def test(
             num_label_ts += 1
 
         process_edges(memory, src, dst, t, msg, neighbor_loader)
+        # Memory mixing to generate expander embeddings
+        x_obs = memory.memory
+
+        # Get expander embeddings for observed nodes.
+        z_exp_obs = exp_gnn(x_obs, cayley_g) # Generate expander embeddings for observed nodes.
 
     metric_dict = {
         f"{split}/{eval_metric}": total_score / num_label_ts
@@ -344,6 +381,25 @@ def main(args):
         .float()
     )
 
+    #Compute cayley bank
+    cayley_bank = build_cayley_bank()
+
+    # Find number of nodes appearing in the training dataset
+    num_cayley = data.num_nodes
+    print(f"Number of nodes in train data / cayley graph: {num_cayley}")
+    print(f"Number of nodes in validation data: {val_data.num_nodes}")
+    print(f"Number of nodes in test data: {test_data.num_nodes}")
+    print(f"Number of nodes in the whole dataset: {data.num_nodes}")
+
+    # Initialise expander graph (Cayley graph) for memory mixing 
+    cayley_g, cayley_edge_attr = batched_augment_cayley(num_cayley, cayley_bank)
+    cayley_g = torch.LongTensor(cayley_g).to(device)  
+    cayley_edge_attr = torch.LongTensor(cayley_edge_attr).to(device)
+    cayley_edge_attr = cayley_edge_attr.float()
+
+    # Initialise expander GNN pass for memory mixing
+    exp_gnn = ExpanderGCN(in_channels=memory_dim, out_channels=embedding_dim).to(device)
+
     node_pred = NodePredictor(in_dim=embedding_dim, out_dim=num_classes).to(device)
 
     optimizer = torch.optim.Adam(
@@ -394,7 +450,10 @@ def main(args):
         train_dict = train(
             epoch=epoch,
             memory=memory,
+            memory_dim=memory_dim,
             gnn=gnn,
+            exp_gnn=exp_gnn,
+            cayley_g=cayley_g,
             node_pred=node_pred,
             lr_scheduler=lr_scheduler,
             dataset=dataset,
@@ -414,7 +473,10 @@ def main(args):
         start_time = timeit.default_timer()
         val_dict = test(
             memory=memory,
+            memory_dim=memory_dim,
             gnn=gnn,
+            exp_gnn=exp_gnn,
+            cayley_g=cayley_g,
             node_pred=node_pred,
             dataset=dataset,
             data=data,
@@ -436,7 +498,10 @@ def main(args):
         start_time = timeit.default_timer()
         test_dict = test(
             memory=memory,
+            memory_dim=memory_dim,
             gnn=gnn,
+            exp_gnn=exp_gnn,
+            cayley_g=cayley_g,
             node_pred=node_pred,
             dataset=dataset,
             data=data,
