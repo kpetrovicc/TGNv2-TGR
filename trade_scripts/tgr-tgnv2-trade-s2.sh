@@ -20,7 +20,8 @@ module load StdEnv/2020
 module load python/3.10
 source tgbkp/bin/activate 
 
-seed=3
+seed=2
+data="tgbn-trade"
 
 echo " >>> DATA: $data"
 echo " >>> Seed: $seed"

@@ -21,6 +21,8 @@ module load python/3.10
 source tgbkp/bin/activate 
 
 seed=5
+epochs=50
+data="tgbn-genre"
 
 echo " >>> DATA: $data"
 echo " >>> Seed: $seed"
@@ -30,7 +32,7 @@ echo "==========================================================================
 echo ""
 echo " ***** TGN: $data *****"
 echo ""
-python TGNv2-TGR/train-tgbn-nodeproppred-tgr.py --seed "$seed" 
+python TGNv2-TGR/train-tgbn-nodeproppred-tgr-genre.py --seed "$seed" --epochs "$epochs"
 echo "===================================================================================="
 echo "===================================================================================="
 
