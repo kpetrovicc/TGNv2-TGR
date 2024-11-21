@@ -319,7 +319,7 @@ def main(args):
     LOG_DIR = 'logs/tidy/'
     os.makedirs(LOG_DIR, exist_ok=True)
 
-    name = "tgbn-genre"
+    name = "tgbn-reddit"
     dataset = PyGNodePropPredDataset(name=name, root="datasets")
     train_mask = dataset.train_mask
     val_mask = dataset.val_mask

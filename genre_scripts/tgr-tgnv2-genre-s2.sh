@@ -24,6 +24,7 @@ seed=2
 lr=1e-4
 epochs=50
 data="tgbn-genre"
+dataset="tgbn-genre"
 
 echo " >>> DATA: $data"
 echo " >>> Seed: $seed"
@@ -33,7 +34,7 @@ echo "==========================================================================
 echo ""
 echo " ***** TGN: $data *****"
 echo ""
-python TGNv2-TGR/train-tgbn-nodeproppred-tgr-genre.py --seed "$seed" --epochs "$epochs" --lr="$lr"
+python TGNv2-TGR/train-tgbn-nodeproppred-tgr-genre.py --seed "$seed" --epochs "$epochs" --lr="$lr" --dataset "$dataset"
 echo "===================================================================================="
 echo "===================================================================================="
 
